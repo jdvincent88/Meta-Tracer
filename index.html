@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>Meta-Tracer</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+        body { margin: 0; }
+
+        .popupWindow {
+            position: fixed;
+            top: 12.5%;
+            left: 50%;
+            transform: translate(-50%, -12.5%);
+            background-color: #303841;
+            border-radius: 4px;
+            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            color: #EFEFEF;
+            overflow: hidden;
+        }
+
+        .popupHeader {
+            background-color: #2E3238;
+            padding: 8px;
+            text-align: center;
+            font-size: 75%;
+        }
+
+        .popupSection {
+            padding: 8px;
+            white-space: pre-wrap;
+            background-color: #50565E;
+        }
+
+        .popupSection a { color: #EFEFEF; }
+
+        /*
+         * DOM overlay. In immersive AR (WebXR "dom-overlay" feature, supported by the
+         * Meta Quest browser) only this element is composited on top of passthrough,
+         * so every control that must be reachable inside the headset lives here.
+         */
+        #overlay {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        #controlPanel {
+            position: absolute;
+            left: 16px;
+            bottom: 16px;
+            width: 300px;
+            box-sizing: border-box;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background-color: rgba(48, 56, 65, 0.92);
+            color: #EFEFEF;
+            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 14px;
+            pointer-events: auto;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #controlPanel h2 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            font-weight: normal;
+            text-align: center;
+            color: #BBBBBB;
+        }
+
+        .controlRow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 8px 0;
+        }
+
+        .controlRow label {
+            flex: 0 0 64px;
+        }
+
+        .controlButton {
+            flex: 1;
+            min-height: 40px;
+            border: 1px solid #6B7280;
+            border-radius: 6px;
+            background-color: #50565E;
+            color: #EFEFEF;
+            font: inherit;
+            cursor: pointer;
+        }
+
+        .controlButton.active {
+            background-color: #F80;
+            border-color: #F80;
+            color: #111;
+        }
+
+        .stepButton {
+            flex: 0 0 40px;
+            min-height: 40px;
+            border: 1px solid #6B7280;
+            border-radius: 6px;
+            background-color: #50565E;
+            color: #EFEFEF;
+            font: inherit;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        #opacitySlider {
+            flex: 1;
+            min-width: 0;
+            height: 40px;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        #opacityValue {
+            flex: 1;
+            text-align: right;
+        }
+
+        #exitArButton {
+            display: none;
+            width: 100%;
+            margin-top: 4px;
+        }
+
+        #overlay.presenting #exitArButton {
+            display: block;
+        }
+
+        .controlHint {
+            margin: 6px 0 0 0;
+            font-size: 11px;
+            color: #BBBBBB;
+        }
+        </style>
+    </head>
+    <body style="background-color:black;">
+        <!-- Import maps polyfill -->
+        <!-- Remove this when import maps will be widely supported -->
+        <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+
+        <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.147.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.147.0/examples/jsm/",
+                "three-mesh-ui": "https://unpkg.com/three-mesh-ui@6.5.2/build/three-mesh-ui.module.js"
+            }
+        }
+        </script>
+
+        <script type="x-shader/x-vertex" id="vertexshader">
+        varying vec2 vUv;
+
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+        </script>
+
+        <script type="x-shader/x-fragment" id="fragmentshader">
+        uniform sampler2D colorTexture;
+        uniform float opacity;
+        uniform float invert; // 0.0 = original colors, 1.0 = inverted colors
+        float stepSize = 2.0;
+
+        varying vec2 vUv;
+
+        float intensity(in vec4 color) {
+            return sqrt((color.x*color.x)+(color.y*color.y)+(color.z*color.z));
+        }
+
+        void main() {
+            vec2 uv = vUv;
+
+            ivec2 imageSize = textureSize(colorTexture, 0);
+            vec2 step = vec2(stepSize/float(imageSize.x), stepSize/float(imageSize.y));
+
+            float topLeft     = intensity(texture2D(colorTexture, uv + vec2(-step.x, step.y)));
+            float left        = intensity(texture2D(colorTexture, uv + vec2(-step.x, 0)));
+            float bottomLeft  = intensity(texture2D(colorTexture, uv + vec2(-step.x, -step.y)));
+            float top         = intensity(texture2D(colorTexture, uv + vec2(0, step.y)));
+            float bottom      = intensity(texture2D(colorTexture, uv + vec2(0, -step.y)));
+            float topRight    = intensity(texture2D(colorTexture, uv + vec2(step.x, step.y)));
+            float right       = intensity(texture2D(colorTexture, uv + vec2(step.x, 0)));
+            float bottomRight = intensity(texture2D(colorTexture, uv + vec2(step.x, -step.y)));
+
+            float horizontal = topLeft + 2.0 * left + bottomLeft - topRight - 2.0 * right - bottomRight;
+            float vertical = -topLeft - 2.0 * top - topRight + bottomLeft + 2.0 * bottom + bottomRight;
+
+            float sobelResult = sqrt(horizontal * horizontal + vertical * vertical);
+
+            vec4 sobelColor = vec4(1.0 - sobelResult, 1.0 - sobelResult, 1.0 - sobelResult, sobelResult);
+            vec4 currentColor = texture2D(colorTexture, uv);
+
+            float smoothOpacity = smoothstep(0.0, 0.3, opacity);
+
+            vec4 result = vec4(
+                currentColor.x * smoothOpacity + (1.0 - smoothOpacity) * sobelColor.x,
+                currentColor.y * smoothOpacity + (1.0 - smoothOpacity) * sobelColor.y,
+                currentColor.z * smoothOpacity + (1.0 - smoothOpacity) * sobelColor.z,
+                currentColor.w * min(opacity, smoothOpacity) + (1.0 - smoothOpacity) * sobelColor.w
+            );
+
+            // Color invert filter. On grayscale passthrough (Quest 2) inverting turns
+            // dark line art into light lines that stand out against a dark desk or paper.
+            result.rgb = mix(result.rgb, vec3(1.0) - result.rgb, invert);
+
+            gl_FragColor = result;
+        }
+        </script>
+
+
+        <script type="module">
+
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+        import ThreeMeshUI from 'three-mesh-ui';
+
+        let container;
+        let camera, scene, renderer;
+        let controller1, controller2;
+        let clock;
+
+        let group = null;
+        let imagePlane = null;
+        let instructionsPlane = null;
+        let currentOpacity = 0.75;
+        let currentScale = 1.0;
+        let isLocked = false;
+        let isInverted = false;
+        let previousDidPressHideImage = false;
+        let previousDidPressHideInstructions = false;
+        let previousDidPressInvert = false;
+
+        // DOM overlay controls
+
+        const overlayRoot = document.getElementById("overlay");
+        const lockButton = document.getElementById("lockButton");
+        const invertButton = document.getElementById("invertButton");
+        const opacitySlider = document.getElementById("opacitySlider");
+        const opacityValue = document.getElementById("opacityValue");
+        const opacityDownButton = document.getElementById("opacityDownButton");
+        const opacityUpButton = document.getElementById("opacityUpButton");
+        const exitArButton = document.getElementById("exitArButton");
+
+        init();
+        animate();
+
+        function init() {
+            container = document.getElementById("container");
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 10);
+            camera.position.set(0, 0, 1);
+
+            const controls = new OrbitControls(camera, container);
+            controls.minDistance = 0;
+            controls.maxDistance = 8;
+
+            clock = new THREE.Clock();
+
+            // Renderer
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.localClippingEnabled = true;
+            renderer.xr.enabled = true;
+            renderer.xr.setFoveation(0);
+            container.appendChild(renderer.domElement);
+
+            renderer.xr.addEventListener('sessionstart', function () {
+                overlayRoot.classList.add("presenting");
+            });
+
+            renderer.xr.addEventListener('sessionend', function () {
+                overlayRoot.classList.remove("presenting");
+
+                // ARButton hides the overlay root when the session ends; keep the
+                // panel usable on the 2D page afterwards.
+                overlayRoot.style.display = "";
+                requestAnimationFrame(function () {
+                    overlayRoot.style.display = "";
+                });
+            });
+
+            // Controllers
+            //
+            // Repositioning is driven by WebXR select events instead of polling the
+            // trigger button: when the controller ray points at the DOM overlay, the
+            // browser suppresses select events, so pressing the trigger on a panel
+            // button never moves the image.
+
+            controller1 = renderer.xr.getController(0);
+            controller1.addEventListener('selectstart', onSelectStart);
+            controller1.addEventListener('selectend', onSelectEnd);
+            controller1.addEventListener('squeezestart', onSqueezeStart);
+            scene.add(controller1);
+
+            controller2 = renderer.xr.getController(1);
+            controller2.addEventListener('selectstart', onSelectStart);
+            controller2.addEventListener('selectend', onSelectEnd);
+            controller2.addEventListener('squeezestart', onSqueezeStart);
+            scene.add(controller2);
+
+            // UI
+
+            makeInstructionsUI();
+            makeControlPanel();
+
+            // Load image
+
+            const length = 0.25;
+            group = new THREE.Group();
+            group.position.set(0, 0, -0.5);
+
+            scene.add(group);
+
+            const url = new URL(window.location);
+            const imageUrlString = url.searchParams.get('image');
+
+            if (imageUrlString == null) {
+                loadTexture(group, length, 'Images/discovery.jpg');
+            } else {
+                try {
+                    const imageUrl = new URL(imageUrlString);
+                    document.getElementById("urlInput").value = imageUrlString;
+                    loadTexture(group, length, imageUrl.toString());
+                } catch (exception) {
+                    alert("Invalid URL, try a different URL.");
+                }
+            }
+
+            // Resize event
+
+            window.addEventListener('resize', onWindowResize);
+
+            // Keyboard shortcuts (handy when previewing on a PC)
+
+            window.addEventListener('keydown', onKeyDown);
+
+            // URL Input
+
+            const inputLink = document.getElementById("urlInputLink");
+            inputLink.onclick = changeImageUrl;
+
+            // Send to Quest
+
+            const sendToQuestLink = document.getElementById("urlToQuestLink");
+            sendToQuestLink.onclick = sendUrlToQuest;
+        }
+
+        function onSelectStart() {
+            this.userData.isSelecting = true;
+        }
+
+        function onSelectEnd() {
+            this.userData.isSelecting = false;
+        }
+
+        function onSqueezeStart() {
+            setLocked(!isLocked);
+        }
+
+        function onKeyDown(event) {
+            const target = event.target;
+
+            if (target != null && (target.tagName == "INPUT" || target.tagName == "TEXTAREA")) {
+                return;
+            }
+
+            switch (event.key) {
+                case 'l':
+                case 'L':
+                    setLocked(!isLocked);
+                    break;
+                case 'i':
+                case 'I':
+                    setInverted(!isInverted);
+                    break;
+                case '[':
+                    incrementOpacity(-0.05);
+                    break;
+                case ']':
+                    incrementOpacity(0.05);
+                    break;
+            }
+        }
+
+        function makeControlPanel() {
+            lockButton.onclick = function () {
+                setLocked(!isLocked);
+            };
+
+            invertButton.onclick = function () {
+                setInverted(!isInverted);
+            };
+
+            opacitySlider.oninput = function () {
+                setOpacity(parseFloat(opacitySlider.value));
+            };
+
+            opacityDownButton.onclick = function () {
+                incrementOpacity(-0.05);
+            };
+
+            opacityUpButton.onclick = function () {
+                incrementOpacity(0.05);
+            };
+
+            exitArButton.onclick = function () {
+                const xrSession = renderer.xr.getSession();
+
+                if (xrSession != null) {
+                    xrSession.end();
+                }
+            };
+
+            setLocked(isLocked);
+            setInverted(isInverted);
+            setOpacity(currentOpacity);
+        }
+
+        function makeInstructionsUI() {
+            const textContainer = new ThreeMeshUI.Block({
+                borderRadius: 0.05,
+                width: 0.45,
+                height: 0.72,
+                padding: 0.05,
+                textAlign: 'left',
+                fontKerning: 'none',
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'https://unpkg.com/three-mesh-ui@6.5.2/examples/assets/Roboto-msdf.json',
+                fontTexture: 'https://unpkg.com/three-mesh-ui@6.5.2/examples/assets/Roboto-msdf.png'
+            });
+
+            textContainer.rotation.y = -45.0 * (Math.PI/180.0);
+            textContainer.position.set(0.5, 0, -0.5);
+
+            const labelColor = new THREE.Color(0xffff00);
+            const valueColor = new THREE.Color(0xffffff);
+
+            const lines = [
+                ["\nAnalog right: ", "Increase opacity"],
+                ["\nAnalog left: ", "Decrease opacity"],
+                ["\n\nAnalog up: ", "Increase size"],
+                ["\nAnalog down: ", "Decrease size"],
+                ["\n\nHold trigger: ", "Reposition image"],
+                ["\nGrip: ", "Lock/Unlock position"],
+                ["\nClick thumbstick: ", "Invert colors"],
+                ["\n\nA or X: ", "Show/Hide image"],
+                ["\nB or Y: ", "Show/Hide instructions"],
+                ["\n\nPoint at the panel ", "to use the controls"]
+            ];
+
+            const texts = [
+                new ThreeMeshUI.Text({
+                    content: "Instructions\n",
+                    fontSize: 0.04,
+                    fontColor: labelColor
+                })
+            ];
+
+            for (const [label, value] of lines) {
+                texts.push(new ThreeMeshUI.Text({
+                    content: label,
+                    fontSize: 0.025,
+                    fontColor: labelColor
+                }));
+
+                texts.push(new ThreeMeshUI.Text({
+                    content: value,
+                    fontSize: 0.025,
+                    fontColor: valueColor
+                }));
+            }
+
+            textContainer.add(...texts);
+
+            scene.add(textContainer);
+            instructionsPlane = textContainer;
+        }
+
+        function changeImageUrl() {
+            const urlInput = document.getElementById("urlInput");
+            const url = new URL(window.location);
+            url.searchParams.set("image", urlInput.value);
+            window.location = url.toString();
+        }
+
+        function sendUrlToQuest() {
+            const urlInput = document.getElementById("urlInput");
+            const url = new URL(window.location);
+            url.searchParams.set("image", urlInput.value);
+
+            let sendToQuestUrl = new URL("https://oculus.com/open_url/");
+            sendToQuestUrl.searchParams.set("url", url);
+            window.location.href = sendToQuestUrl;
+        }
+
+        function loadTexture(container, length, url) {
+
+            const loader = new THREE.TextureLoader();
+
+            loader.load(
+                url,
+
+                function (texture) {
+                    // Use our own DOM overlay root so the control panel is visible
+                    // (and clickable with the controller ray) inside the AR session.
+                    document.body.appendChild(ARButton.createButton(renderer, {
+                        optionalFeatures: ['dom-overlay'],
+                        domOverlay: { root: overlayRoot }
+                    }));
+
+                    let originalWidth = texture.image.width;
+                    let originalHeight = texture.image.height;
+
+                    let max = Math.max(originalWidth, originalHeight);
+                    let width = (originalWidth/max) * length;
+                    let height = (originalHeight/max) * length;
+
+                    const geometry = new THREE.PlaneGeometry(width, height);
+
+                    texture.generateMipmaps = false;
+
+                    const sobelMaterial = new THREE.ShaderMaterial({
+                        transparent: true,
+                        side: THREE.DoubleSide,
+                        uniforms: {
+                            colorTexture: { value: texture },
+                            opacity: { value: currentOpacity },
+                            invert: { value: isInverted ? 1.0 : 0.0 }
+                        },
+                        vertexShader: document.getElementById('vertexshader').textContent,
+                        fragmentShader: document.getElementById('fragmentshader').textContent
+                    });
+
+                    imagePlane = new THREE.Mesh(geometry, sobelMaterial);
+
+                    container.add(imagePlane);
+                },
+
+                undefined,
+
+                function (err) {
+                    alert("Unable to load image, try a different URL.\n\nCross-Origin Resource Sharing (CORS) policies might prevent the app from loading images from certain websites.");
+                }
+            );
+        }
+
+        // State setters. Every input path (thumbsticks, controller buttons, DOM panel,
+        // keyboard) funnels through these so the panel always reflects the real state.
+
+        function setOpacity(value) {
+            currentOpacity = Math.min(Math.max(value, 0.0), 1.0);
+
+            if (imagePlane != null) {
+                imagePlane.material.uniforms["opacity"].value = currentOpacity;
+            }
+
+            const percent = Math.round(currentOpacity * 100);
+
+            if (parseFloat(opacitySlider.value) != currentOpacity) {
+                opacitySlider.value = currentOpacity;
+            }
+
+            opacityValue.textContent = percent + "%";
+        }
+
+        function incrementOpacity(delta) {
+            setOpacity(currentOpacity + delta);
+        }
+
+        function setLocked(flag) {
+            isLocked = flag;
+            lockButton.textContent = isLocked ? "Locked" : "Unlocked";
+            lockButton.classList.toggle("active", isLocked);
+            lockButton.setAttribute("aria-pressed", isLocked ? "true" : "false");
+        }
+
+        function setInverted(flag) {
+            isInverted = flag;
+
+            if (imagePlane != null) {
+                imagePlane.material.uniforms["invert"].value = isInverted ? 1.0 : 0.0;
+            }
+
+            invertButton.textContent = isInverted ? "Inverted" : "Normal";
+            invertButton.classList.toggle("active", isInverted);
+            invertButton.setAttribute("aria-pressed", isInverted ? "true" : "false");
+        }
+
+        function incrementScale(delta) {
+            currentScale += delta;
+            currentScale = Math.min(Math.max(currentScale, 0.0), 4.0);
+
+            if (group != null) {
+                group.scale.set(currentScale, currentScale, currentScale);
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize( window.innerWidth, window.innerHeight );
+        }
+
+        //
+
+        function animate() {
+            renderer.setAnimationLoop(loop);
+        }
+
+        function loop() {
+            updateInput();
+            ThreeMeshUI.update();
+            renderer.render(scene, camera);
+        }
+
+        function updateInput() {
+            const xrSession = renderer.xr.getSession();
+            const elapsedTime = clock.getDelta();
+
+            let didPressHideImage = false;
+            let didPressHideInstructions = false;
+            let didPressInvert = false;
+
+            if (xrSession == null || xrSession.inputSources.length <= 0) {
+                return;
+            }
+
+            for (let i = 0; i < xrSession.inputSources.length; i++) {
+                const input = xrSession.inputSources[i];
+                const gamepad = input.gamepad;
+
+                if (
+                    gamepad != null &&
+                    gamepad.mapping == "xr-standard" &&
+                    gamepad.axes.length >= 4 &&
+                    gamepad.buttons.length >= 6
+                ) {
+                    const horizontal = gamepad.axes[2]; // Primary thumbstick X
+                    const vertical = gamepad.axes[3]; // Primary thumbstick Y
+
+                    const thumbstickButton = gamepad.buttons[3];
+                    const axButton = gamepad.buttons[4];
+                    const byButton = gamepad.buttons[5];
+
+                    // Size is part of the placement, so it is frozen while locked.
+                    if (!isLocked) {
+                        if (vertical > 0.7) {
+                            incrementScale(-1.0 * elapsedTime);
+                        } else if (vertical < -0.7) {
+                            incrementScale(1.0 * elapsedTime);
+                        }
+                    }
+
+                    if (horizontal > 0.7) {
+                        incrementOpacity(1.0 * elapsedTime);
+                    } else if (horizontal < -0.7) {
+                        incrementOpacity(-1.0 * elapsedTime);
+                    }
+
+                    // FIXME: This index won't match the correct controller
+                    // if a disconnection happens during the session.
+                    const controllerToUse = renderer.xr.getController(i);
+
+                    if (!isLocked && controllerToUse.userData.isSelecting === true) {
+                        const offsetPosition = controllerToUse.localToWorld(new THREE.Vector3(0, 0, 0.045));
+                        group.position.copy(offsetPosition);
+                        group.setRotationFromQuaternion(controllerToUse.quaternion);
+                    }
+
+                    if (thumbstickButton.pressed) {
+                        didPressInvert = true;
+                    }
+
+                    if (axButton.pressed) {
+                        didPressHideImage = true;
+                    }
+
+                    if (byButton.pressed) {
+                        didPressHideInstructions = true;
+                    }
+                }
+            }
+
+            const shouldChangeInstructionsVisibility = (!didPressHideInstructions && previousDidPressHideInstructions);
+            previousDidPressHideInstructions = didPressHideInstructions;
+
+            if (shouldChangeInstructionsVisibility && instructionsPlane != null) {
+                instructionsPlane.visible = !instructionsPlane.visible;
+            }
+
+            const shouldChangeImageVisibility = (!didPressHideImage && previousDidPressHideImage);
+            previousDidPressHideImage = didPressHideImage;
+
+            if (shouldChangeImageVisibility && imagePlane != null) {
+                imagePlane.visible = !imagePlane.visible;
+            }
+
+            const shouldToggleInvert = (!didPressInvert && previousDidPressInvert);
+            previousDidPressInvert = didPressInvert;
+
+            if (shouldToggleInvert) {
+                setInverted(!isInverted);
+            }
+        }
+
+        </script>
+
+        <div id="container"></div>
+
+        <div class="popupWindow">
+            <div class="popupHeader">Meta-Tracer - AR Tracing for Meta Quest 2</div>
+            <div class="popupSection">1. Paste an image URL below.<br/>2. Click on "Load image" or "Send link to Meta Quest".<br/>3. Click on the "Start AR" button below to start.</div>
+            <div class="popupSection"><div style="margin-right: 8px"><input id="urlInput" type="url" style="width: 100%" placeholder="https://paste.some.website/image/here.jpg"/></div></div>
+            <div class="popupSection"><a href="#" id="urlInputLink">Load image</a></div>
+            <div class="popupSection"><a href="#" id="urlToQuestLink">Send link to Meta Quest</a></div>
+            <div class="popupSection" style="font-size: 75%">Based on <a href="https://github.com/fabio914/passtracing">Passtracing</a> by Fabio Dela Antonio (MIT).</div>
+        </div>
+
+        <!-- DOM overlay root: shown inside the AR session on top of passthrough -->
+        <div id="overlay">
+            <div id="controlPanel">
+                <h2>Meta-Tracer</h2>
+                <div class="controlRow">
+                    <label for="lockButton">Position</label>
+                    <button id="lockButton" class="controlButton" type="button" aria-pressed="false">Unlocked</button>
+                </div>
+                <div class="controlRow">
+                    <label for="opacitySlider">Opacity</label>
+                    <span id="opacityValue">75%</span>
+                </div>
+                <div class="controlRow">
+                    <button id="opacityDownButton" class="stepButton" type="button" aria-label="Decrease opacity">&minus;</button>
+                    <input id="opacitySlider" type="range" min="0" max="1" step="0.01" value="0.75" aria-label="Image opacity"/>
+                    <button id="opacityUpButton" class="stepButton" type="button" aria-label="Increase opacity">+</button>
+                </div>
+                <div class="controlRow">
+                    <label for="invertButton">Colors</label>
+                    <button id="invertButton" class="controlButton" type="button" aria-pressed="false">Normal</button>
+                </div>
+                <button id="exitArButton" class="controlButton" type="button">Exit AR</button>
+                <p class="controlHint">Grip: lock &middot; Thumbstick click: invert &middot; Keyboard: L, I, [ ]</p>
+            </div>
+        </div>
+    </body>
+</html>

@@ -1,160 +1,71 @@
-# Reality Mixer JS
+# Meta-Tracer
 
-This is a small Mixed Reality Capture module for [WebXR](https://immersiveweb.dev) + [Three.js](https://threejs.org).
+**Drawing/tracing projector in Augmented Reality (Passthrough) for Meta Quest 2**
 
-You can use this module to allow users to record your WebXR experiences in Mixed Reality. 
+Meta-Tracer is a [WebXR](https://immersiveweb.dev) app built with [three.js](https://threejs.org) and [three-mesh-ui](https://felixmariotto.github.io/three-mesh-ui/) that projects a virtual image on top of a sheet of paper in passthrough so you can trace it. It is plain HTML and JavaScript with no build step: the whole app is [`index.html`](index.html), and it can be served straight from GitHub Pages.
 
-Unlike the original [Reality Mixer](https://github.com/fabio914/RealityMixer) or [LIV](https://www.liv.tv), the Mixed Reality composition is happening on the browser itself. However, users will need another external application to record their browser (e.g. [OBS](https://obsproject.com)).
+It is based on [Passtracing](https://github.com/fabio914/passtracing) by Fabio Dela Antonio (MIT), tuned for the Quest 2's grayscale passthrough, and adds three features:
 
-Keep in mind that this is still just a prototype and that I'm not a frontend developer. Feel free to open PRs and contribute to the project.
+| Feature | What it does | Controller | Panel | Keyboard |
+|---------|--------------|------------|-------|----------|
+| **Lock** | Freezes the image in place. While locked, the trigger no longer repositions the image and the thumbstick no longer resizes it. Opacity and invert still work. | Grip (squeeze) | "Position" button | `L` |
+| **Opacity slider** | Sets the image opacity from 0% to 100%. Below about 30% the image fades into an edge-detected line drawing. | Thumbstick left/right | Slider, and the − / + buttons | `[` and `]` |
+| **Color invert** | Inverts the image colors in the shader. On grayscale passthrough this turns dark line art into light lines that stand out against dark paper or a desk. | Click the thumbstick | "Colors" button | `I` |
 
-[YouTube video](https://youtu.be/t0TmLT84J_0)
+The control panel is a WebXR DOM overlay, so it floats in front of you inside the AR session. Point a controller at it and pull the trigger to press a button or drag the slider. Pressing the trigger while pointing at the panel never moves the image, even when it is unlocked.
+
+## Instructions
+
+1. Open the GitHub Pages URL for this repository on your PC (or directly in the Quest browser).
+
+2. Copy an image URL and paste it in the text field. For example, a public domain image from [rawpixel](https://www.rawpixel.com/public-domain).
+
+   *Some [CORS policies](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS) might prevent the app from loading images from certain websites. You'll want to use URLs from websites that allow their content to be loaded from any origin* (`Access-Control-Allow-Origin: *`).
+
+3. Click on "Load image" to reload the page with this image, or click on "Send link to Meta Quest" to send it to your headset.
+
+4. After opening the link on your Meta Quest 2, click on "Start AR".
+
+5. Hold the trigger to position the image on top of a sheet of paper, use the thumbstick to adjust size and opacity, then press the grip button (or the "Position" button on the panel) to lock it.
+
+6. Draw/Trace. Use "Exit AR" on the panel to leave the session.
+
+### All controls
+
+| Input | Action |
+|-------|--------|
+| Thumbstick left / right | Decrease / increase opacity |
+| Thumbstick up / down | Increase / decrease size (disabled while locked) |
+| Hold trigger | Reposition image (disabled while locked) |
+| Grip | Lock / unlock position |
+| Click thumbstick | Invert colors |
+| A or X | Show / hide image |
+| B or Y | Show / hide instructions |
+
+## Running locally
+
+There is nothing to build. Serve the repository root over HTTPS (WebXR requires a secure context; `localhost` also counts) and open `index.html`. For example:
+
+```
+npx http-server -p 8080
+```
+
+Then open `http://localhost:8080/` on your PC to preview, or expose it over HTTPS (for example with [localtunnel](https://github.com/localtunnel/localtunnel)) to open it on the headset.
+
+three.js, three-mesh-ui and the import-map polyfill are loaded from [unpkg](https://unpkg.com), so the device needs internet access.
+
+## Deploying to GitHub Pages
+
+Enable GitHub Pages for the repository (Settings → Pages) with the source set to the `main` branch and the root folder. The app will be available at `https://<user>.github.io/<repository>/`.
 
 ## Requirements
 
- - PC VR headset that's compatible with [WebXR](https://immersiveweb.dev) (e.g. Oculus Rift S).
+Meta Quest 2 (also works on Meta Quest Pro and Quest 3).
 
- - Google Chrome.
+## Credits and license
 
- - Webcam and a green screen. Alternatively, you can use your iPhone/iPad as a camera (without a green screen) with the [LIV Camera app](https://apps.apple.com/us/app/liv-camera/id1482671526) and [NDI Webcam Input](https://www.ndi.tv/tools/).
+- [Passtracing](https://github.com/fabio914/passtracing) by Fabio Dela Antonio, MIT License. Meta-Tracer's `index.html` and the sample image are derived from it.
+- The sample image (`Images/discovery.jpg`) is NASA's photo of Space Shuttle Discovery lifting off on STS-133, sourced via rawpixel (public domain).
+- This repository was forked from [reality-mixer-js](https://github.com/fabio914/reality-mixer-js) (also by Fabio Dela Antonio, MIT). Its files are still present under `src/`, `examples/` and `schemas/`; see [README-reality-mixer.md](README-reality-mixer.md). They are not used by Meta-Tracer.
 
-## Examples
-
- - Use the links below to launch one of the examples in your browser. 
-
- - You'll need to follow [these instructions](#how-to-calibrate) to complete a calibration first.
-
- - Your browser will ask for permission to access your camera, and it'll ask for permission to use your VR headset once you click on the "Enter VR" button.
-
-| Example | GIF |
-|---------|---------------|
-| [webxr_vr_ballshooter](https://fabio914.github.io/reality-mixer-js/examples/webxr_vr_ballshooter.html) | <img src="screenshots/webxr_vr_ballshooter.gif" width="320" /> |
-| [webxr_vr_dragging](https://fabio914.github.io/reality-mixer-js/examples/webxr_vr_dragging.html) | <img src="screenshots/webxr_vr_dragging.gif" width="320" /> | 
-| [webxr_vr_paint](https://fabio914.github.io/reality-mixer-js/examples/webxr_vr_paint.html) | <img src="screenshots/webxr_vr_paint.gif" width="320" /> | 
-
-## How to calibrate
-
-The calibration process has four steps:
-
- - First, you'll need to input the image resolution of your webcam (e.g. 1920 x 1080).
-
- - Second, you'll need to configure your chroma key. You can use the color picker to pick the color of your green screen, and then adjust the values of smoothness and similarity to make it become transparent. You can also click on "More options" to reveal other controls that allow you to crop out areas of the image outside of your green screen.
-
- - The last step happens in VR, put your VR headset on and click on "Enter VR" when you're ready. First, you'll need to bring your right controller very close to the camera (so that it's aligned with the target on the image) and then press the trigger button. Now move away from the camera, position the right controller behind the target (make sure that the controller is at least 1.5m away from the camera), and then press the trigger button again. Repeat that for the third target, and then press the trigger button one last time to leave VR.
-
-- You should now see a window with a JSON text with your calibration. You can make some adjustments if you'd like. For example, you can change the "delay" value in case you notice that the video from the VR scene and the video from the Webcam are out of sync. Finally, you can click on the continue link and then on "Enter VR".
-
-You'll need to recalibrate whenever you change your guardian boundary / play area, change the position and orientation of your camera, or change your green screen. 
-
-## How to test these examples locally
-
- - Clone this repository.
- 
- - Run `npm ci` to download the dependencies.
- 
- - Run `http-server` to start the HTTP server (that can be downloaded by running `npm install -g http-server`).
-
- - WebXR and `navigator.mediaDevices` require HTTPS (unless you're accessing it via `localhost`). You could use a tool like [localtunnel](https://github.com/localtunnel/localtunnel) for testing. You can run `npm install -g localtunnel` to download it and then you can run `lt --port 8080 --subdomin 127.0.0.1` in a separate terminal.
- 
- - Open your browser and navigate to `https://{your HTTPS domain}/examples/webxr_vr_ballshooter.html` (or `https://127.0.0.1:8080/examples/webxr_vr_ballshooter.html`)
-
- ## API
- 
- ```javascript
- 
-import * as THREE from 'three';
-import * as MRC from 'reality-mixer';
- 
-let mixedRealityCapture;
-let scene, renderer, camera;
-
-// ...
- 
-const cameraCalibration = new MRC.CameraCalibration(
-    1920, // width of the video
-    1080, // height of the video
-    38, // vertical field of view in degrees
-    [0, 1.5, 0], // vector with the position of the camera in scene coordinates
-    [0, 0, 0, 1] // quaternion with the orientation of the camera
-);
-
-const chromaKey = new MRC.ChromaKey(
-    [0, 1, 0], // chroma key color (red, green, blue values from 0 to 1)
-    0.25, // similarity (0 to 1)
-    0, // smoothness (0 to 1)
-    [0, 0, 0, 0] // crop (left, right, bottom, top values from 0 to 1)
-);
- 
-const calibration = new MRC.Calibration(
-    cameraCalibration,
-    chromaKey,
-    4, // Delay (in number of frames) between the real camera and the virtual camera
-);
-
-// ... Initialize your Three.js scene and renderer here ...
-
-// Hide your renderer when you want to display the Mixed Reality output
-renderer.domElement.style.display = "none";
-
-// Create a new Mixed Reality Capture session
-mixedRealityCapture = new MRC.MixedRealityCapture( calibration );
-
-// Add the Mixed Reality Output to the document
-document.body.appendChild( mixedRealityCapture.domElement );
-
-// ...
-
-// You should call this whenever the window resizes
-mixedRealityCapture.onWindowResize();
-
-// ...
-
-// Render the Mixed Reality composition after rendering your scene
-
-renderer.render( scene, camera );
-
-mixedRealityCapture.render( renderer.xr, scene );
-
-```
-
-Alternatively, you can instantiate the calibration with a JSON provided by the user:
-
-```javascript
-
-// ...
-
-const json = `
-{ 
-    "schemaVersion": 1, 
-    "camera": { 
-        "width": 1280, 
-        "height": 720, 
-        "fov": 38, 
-        "position": [0, 1.5, 0], 
-        "orientation": [0, 0, 0, 1] 
-    }, 
-    "chromaKey": {
-        "color": [0, 1, 0],
-        "similarity": 0.25,
-        "smoothness": 0,
-        "crop": [0, 0, 0, 0]
-    },
-    "delay": 4
-}
-`;
-
-const calibrationData = JSON.parse( json );
-
-const calibration = MRC.Calibration.fromData( calibrationData );
-
-// ...
-
-mixedRealityCapture = new MRC.MixedRealityCapture( calibration );
-
-// ...
-
-```
-
-## TO-DOs
-
- - Continue iterating on the Calibration (fixes, delay, adustments, etc).
+Licensed under the MIT License, see [LICENSE](LICENSE).
